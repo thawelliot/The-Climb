@@ -100,6 +100,9 @@
     return 2;
   }
 
+  // Returns { ans, exact } or null. Exact covers names and aliases typed
+  // correctly (ignoring case, accents and punctuation); anything matched
+  // through a typo is not exact, so the player is asked to confirm it.
   function match(input, q) {
     const guess = norm(input);
     if (guess.length < 2) return null;
@@ -110,13 +113,13 @@
       for (const form of [name, ...aliases]) {
         const f = norm(form);
         const fc = f.replace(/ /g, "");
-        if (f === guess || fc === compact) return ans;
+        if (f === guess || fc === compact) return { ans, exact: true };
         if (compact.length < 3) continue;
         const d = Math.min(lev(guess, f), lev(compact, fc));
         if (d <= allowedTypos(fc.length) && d < bestDist) { best = ans; bestDist = d; }
       }
     }
-    return best;
+    return best && { ans: best, exact: false };
   }
 
   // ---------- estimated % of players picking each answer ----------
@@ -364,25 +367,59 @@
     timerRaf = requestAnimationFrame(tick);
   }
 
+  // A guess that only matched through a typo waits here until the player
+  // confirms it. The clock keeps running while they decide.
+  let pending = null;
+
   function submit(e) {
     e.preventDefault();
     const input = $("answerInput");
     const text = input.value.trim();
     if (!text || input.disabled) return;
-    const hit = match(text, game.qs[game.i]);
-    if (hit) return finishQuestion(hit);
+    // Enter again on the same text means "yes".
+    if (pending && text === pending.text) return confirmGuess(true);
+    const res = match(text, game.qs[game.i]);
+    if (res && res.exact) return finishQuestion(res.ans);
+    if (res) return askDidYouMean(res.ans, text);
+    wrongGuess(text, "Not on our list — try another");
+  }
+
+  function wrongGuess(text, message) {
+    const input = $("answerInput");
     input.classList.remove("shake");
     void input.offsetWidth;
     input.classList.add("shake");
-    $("feedback").textContent = "Not on our list — try another";
+    $("feedback").textContent = message;
     $("feedback").className = "feedback bad";
     const chip = document.createElement("span");
     chip.textContent = text;
     $("misses").appendChild(chip);
     input.value = "";
+    input.focus();
+  }
+
+  function askDidYouMean(ans, text) {
+    pending = { ans, text };
+    $("dymName").textContent = ans[0];
+    $("dym").hidden = false;
+    $("feedback").textContent = "";
+  }
+
+  function hideDidYouMean() {
+    pending = null;
+    $("dym").hidden = true;
+  }
+
+  function confirmGuess(yes) {
+    if (!pending) return;
+    const { ans, text } = pending;
+    hideDidYouMean();
+    if (yes) finishQuestion(ans);
+    else wrongGuess(text, "No problem — try another");
   }
 
   function finishQuestion(hit) {
+    hideDidYouMean();
     cancelAnimationFrame(timerRaf);
     $("answerInput").disabled = true;
     const q = game.qs[game.i];
@@ -616,6 +653,15 @@
     $("startBtn").onclick = () => newGame("daily");
     $("practiceBtn").onclick = () => newGame("practice");
     $("answerForm").addEventListener("submit", submit);
+    $("dymYes").onclick = () => confirmGuess(true);
+    $("dymNo").onclick = () => confirmGuess(false);
+    // Editing the guess dismisses the question; Escape answers "no".
+    $("answerInput").addEventListener("input", () => {
+      if (pending && $("answerInput").value.trim() !== pending.text) hideDidYouMean();
+    });
+    $("answerInput").addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && pending) confirmGuess(false);
+    });
     $("nextBtn").onclick = next;
     $("helpBtn").onclick = () => $("helpDialog").showModal();
     $("statsBtn").onclick = openStats;

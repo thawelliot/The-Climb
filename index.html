@@ -82,6 +82,13 @@
                autocapitalize="off" spellcheck="false" aria-label="Your answer">
         <button class="btn primary" type="submit">Go</button>
       </form>
+      <div class="dym" id="dym" role="alertdialog" aria-labelledby="dymText" hidden>
+        <span id="dymText">Did you mean <b id="dymName"></b>?</span>
+        <div class="dym-actions">
+          <button class="btn primary small" type="button" id="dymYes">Yes</button>
+          <button class="btn ghost small" type="button" id="dymNo">No</button>
+        </div>
+      </div>
       <p class="feedback" id="feedback" aria-live="polite"></p>
       <div class="misses" id="misses"></div>
     </section>
