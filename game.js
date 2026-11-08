@@ -509,8 +509,28 @@
     fl.textContent = LEVELS[lvl].name;
     fl.classList.toggle("top", lvl === LEVELS.length - 1);
     animateNumber($("finalScore"), 0, summary.score, 1000);
+    // Best answer of the game: most points, rarer pick wins a tie.
+    const best = summary.results.filter((r) => r.a)
+      .sort((x, y) => y.p - x.p || (x.pct ?? 100) - (y.pct ?? 100))[0] || null;
+    const ba = $("bestAnswer");
+    ba.hidden = !best;
+    if (best) {
+      const elite = best.p >= WORLDIE;
+      ba.className = `best-answer${elite ? " elite" : ""}`;
+      ba.innerHTML = `
+        <div class="best-label">⭐ Your best answer</div>
+        <div class="best-main">
+          <div>
+            <div class="best-name">${esc(best.a)}</div>
+            <span class="best-tier">${TIERS[tierIndex(best.p)].name}</span>
+            ${best.pct != null ? `<span class="best-pct">Picked by ${approxPct(best.pct)} of players</span>` : ""}
+          </div>
+          <div class="best-pts">+${best.p}</div>
+        </div>
+        <div class="best-q">${esc(best.q)}</div>`;
+    }
     $("breakdown").innerHTML = summary.results.map((r) => `
-      <li><span>${emoji(r.p)}</span>
+      <li${r === best ? ' class="best"' : ""}><span>${emoji(r.p)}</span>
         <span>${r.a ? esc(r.a) : "—"}<span class="q">${r.pct != null ? `${approxPct(r.pct)} picked · ` : ""}${esc(r.q)}</span></span>
         <span class="p${r.p ? "" : " zero"}">${r.p}</span></li>`).join("");
     $("shareBtn").hidden = mode === "practice";
