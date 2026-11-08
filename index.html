@@ -23,6 +23,10 @@
       <div class="score-pill" id="scorePill" hidden>
         <span class="score-num" id="scoreNum">0</span><span class="score-unit">pts</span>
       </div>
+      <button class="streak-chip" id="streakChip" hidden>🔥 <span>0</span></button>
+      <button class="icon-btn" id="statsBtn" aria-label="Your stats">
+        <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><path d="M5 20V11M12 20V4M19 20v-6" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" fill="none"/></svg>
+      </button>
       <button class="icon-btn" id="helpBtn" aria-label="How to play">?</button>
     </div>
   </header>
@@ -56,6 +60,7 @@
         </li>
       </ol>
       <div class="pyramid" id="pyramid"></div>
+      <p class="resume-note" id="resumeNote" hidden></p>
       <button class="btn primary" id="startBtn">Kick off</button>
     </section>
 
@@ -89,6 +94,7 @@
         <div>
           <div class="who" id="revealWho"></div>
           <div class="tier-stamp" id="revealTier"></div>
+          <div class="pick" id="revealPick"></div>
         </div>
         <div class="pts">+<span id="revealPts">0</span></div>
       </div>
@@ -109,6 +115,7 @@
           <ul id="rareList"></ul>
         </div>
       </div>
+      <p class="est-note">% = estimated share of players giving each answer</p>
       <button class="btn primary" id="nextBtn">Next prompt</button>
     </section>
 
@@ -118,9 +125,11 @@
       <div class="final-level" id="finalLevel"></div>
       <div class="final-score"><span id="finalScore">0</span><small>pts</small></div>
       <ul class="breakdown" id="breakdown"></ul>
+      <div class="mini-stats" id="miniStats"></div>
       <div class="result-actions">
         <button class="btn primary" id="shareBtn">Share result</button>
-        <button class="btn ghost" id="practiceBtn">Practice round</button>
+        <button class="btn ghost" id="resultsStatsBtn">Your stats</button>
+        <button class="btn ghost wide" id="practiceBtn">Practice round (doesn't count)</button>
       </div>
       <p class="next-game" id="nextGame"></p>
     </section>
@@ -136,9 +145,16 @@
       <li>Obvious answers score a few points. <strong>Rare answers score big</strong>: Tap-in, Routine finish, Clinical finish, Screamer, Worldie.</li>
       <li>Your points climb you up the pyramid: Sunday League → Non-League → The EFL → The Premier League → the European Cup Final.</li>
       <li>Spelling doesn't need to be perfect, and surnames are usually enough.</li>
-      <li>One daily game. Practice rounds are unlimited.</li>
+      <li>One daily game, once a day. Leaving mid-prompt counts that prompt as a miss. Practice rounds are unlimited and don't affect your stats.</li>
     </ul>
     <form method="dialog"><button class="btn primary">Got it</button></form>
+  </dialog>
+
+  <dialog class="help stats" id="statsDialog">
+    <h2>Your stats</h2>
+    <div id="statsBody"></div>
+    <p class="est-note">Saved on this device only.</p>
+    <form method="dialog"><button class="btn primary">Close</button></form>
   </dialog>
 
   <script src="questions.js"></script>

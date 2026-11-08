@@ -21,6 +21,14 @@
     set(key, val) { try { localStorage.setItem(key, JSON.stringify(val)); } catch { /* private mode */ } },
   };
 
+  // Every daily game this device has played, keyed by game number:
+  // { score, done, open, results: [{ q, a, p, pct }] }.
+  // `open` is true while a prompt is on screen, so leaving mid-prompt
+  // can't be used to see a prompt and then start it again.
+  const HISTORY_KEY = "climb-history";
+  const history = store.get(HISTORY_KEY) || { v: 1, games: {} };
+  const saveHistory = () => store.set(HISTORY_KEY, history);
+
   // ---------- daily selection ----------
 
   function dayIndex(now = new Date()) {
@@ -111,6 +119,22 @@
     return best;
   }
 
+  // ---------- estimated % of players picking each answer ----------
+
+  // Derived from the rarity points: common answers get far more weight,
+  // and each prompt's answers add up to 100% of players who answered.
+  const pctCache = new Map();
+  function pctOf(q, ans) {
+    if (!pctCache.has(q)) {
+      const w = q.answers.map((a) => Math.pow(101 - a[1], 3));
+      const sum = w.reduce((x, y) => x + y, 0);
+      pctCache.set(q, new Map(q.answers.map((a, i) => [a, (100 * w[i]) / sum])));
+    }
+    return pctCache.get(q).get(ans);
+  }
+  const fmtPct = (p) => (p < 1 ? "<1%" : `${Math.round(p)}%`);
+  const approxPct = (p) => (p < 1 ? "under 1%" : `~${Math.round(p)}%`);
+
   // ---------- levels & backdrop ----------
 
   function levelFor(score) {
@@ -186,32 +210,129 @@
 
   const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
+  // ---------- stats ----------
+
+  function computeStats() {
+    const done = Object.entries(history.games)
+      .filter(([, g]) => g.done)
+      .map(([n, g]) => ({ n: +n, ...g }));
+    const played = new Set(done.map((g) => g.n));
+
+    // Current streak counts back from today, or from yesterday if today
+    // hasn't been played yet (so the streak isn't "lost" until midnight).
+    let current = 0;
+    for (let n = played.has(gameNo) ? gameNo : gameNo - 1; played.has(n); n--) current++;
+    let best = 0, run = 0;
+    [...played].sort((a, b) => a - b).forEach((n, i, arr) => {
+      run = i && n === arr[i - 1] + 1 ? run + 1 : 1;
+      best = Math.max(best, run);
+    });
+
+    const results = done.flatMap((g) => g.results);
+    const answered = results.filter((r) => r.a);
+    const rarest = answered.filter((r) => r.pct != null).sort((a, b) => a.pct - b.pct)[0] || null;
+    const levels = LEVELS.map(() => 0);
+    done.forEach((g) => levels[levelFor(g.score)]++);
+
+    return {
+      games: done.length,
+      current,
+      best,
+      average: done.length ? Math.round(done.reduce((s, g) => s + g.score, 0) / done.length) : 0,
+      top: done.length ? Math.max(...done.map((g) => g.score)) : 0,
+      worldies: answered.filter((r) => r.p >= WORLDIE).length,
+      prompts: results.length,
+      answered: answered.length,
+      timeouts: results.length - answered.length,
+      rarest,
+      levels,
+      todayLevel: history.games[gameNo]?.done ? levelFor(history.games[gameNo].score) : -1,
+    };
+  }
+
+  function renderStreak() {
+    const { current } = computeStats();
+    const chip = $("streakChip");
+    chip.hidden = current === 0;
+    chip.querySelector("span").textContent = current;
+    chip.title = `${current}-day streak`;
+  }
+
+  function renderStats() {
+    const s = computeStats();
+    const body = $("statsBody");
+    if (!s.games) {
+      body.innerHTML = `<p class="stats-empty">Finish today's game to start your stats. Your streak, average and best answers will show up here.</p>`;
+      return;
+    }
+    const tile = (v, label) => `<div class="stat"><b>${v}</b><span>${label}</span></div>`;
+    const max = Math.max(...s.levels, 1);
+    const bars = LEVELS.map((l, i) => `
+      <div class="dist-row${i === s.todayLevel ? " today" : ""}${i === LEVELS.length - 1 ? " top" : ""}">
+        <span class="dist-name">${l.name}</span>
+        <div class="dist-bar"><div style="width:${Math.max(6, (s.levels[i] / max) * 100)}%">${s.levels[i]}</div></div>
+      </div>`).reverse().join("");
+    const rate = s.prompts ? Math.round((s.answered / s.prompts) * 100) : 0;
+    body.innerHTML = `
+      <div class="stat-grid">
+        ${tile(s.games, "Played")}${tile(s.current, "Current streak")}${tile(s.best, "Best streak")}
+        ${tile(s.average, "Average score")}${tile(s.top, "Best score")}${tile(s.worldies, "Worldies")}
+      </div>
+      <h3>Where you finished</h3>
+      <div class="dist">${bars}</div>
+      <h3>The details</h3>
+      <ul class="facts">
+        <li><span>Answer rate</span><b>${rate}%</b><small>${s.answered} of ${s.prompts} prompts</small></li>
+        <li><span>Time-outs</span><b>${s.timeouts}</b></li>
+        ${s.rarest ? `<li><span>Rarest answer</span><b>${esc(s.rarest.a)}</b><small>${approxPct(s.rarest.pct)} of players ·${esc(s.rarest.q)}</small></li>` : ""}
+      </ul>`;
+  }
+
+  function openStats() {
+    renderStats();
+    $("statsDialog").showModal();
+  }
+
   // ---------- game ----------
 
   const today = dayIndex();
   const gameNo = today + 1;
-  const SAVE_KEY = `climb-game-${gameNo}`;
 
   let game = null;
   let timerRaf = 0;
 
+  // Daily games write every step to history; practice rounds don't.
+  function record() { return game.mode === "daily" ? history.games[gameNo] : null; }
+
   function newGame(mode) {
+    const rec = mode === "daily" ? (history.games[gameNo] ||= { score: 0, done: false, open: false, results: [] }) : null;
     game = {
       mode,
       qs: mode === "daily" ? dailyQuestions(today) : practiceQuestions(),
-      i: 0,
-      score: 0,
-      results: [],
+      score: rec ? rec.score : 0,
+      results: rec ? rec.results : [],
     };
+    // Left mid-prompt last time: that prompt counts as a miss.
+    if (rec && rec.open) {
+      const q = game.qs[rec.results.length];
+      rec.results.push({ q: q.prompt, a: null, p: 0 });
+      rec.open = false;
+      toast(`Prompt ${rec.results.length} counted as a miss — you left mid-prompt`);
+    }
+    if (rec) saveHistory();
+    game.i = game.results.length;
     $("scorePill").hidden = false;
-    $("scoreNum").textContent = "0";
-    setScene(0);
-    renderLadder(0);
-    askQuestion();
+    $("scoreNum").textContent = game.score;
+    setScene(levelFor(game.score));
+    renderLadder(game.score);
+    if (game.i >= game.qs.length) endGame();
+    else askQuestion();
   }
 
   function askQuestion() {
     const q = game.qs[game.i];
+    const rec = record();
+    if (rec) { rec.open = true; saveHistory(); }
     show("playScreen");
     $("qCount").textContent = `${game.mode === "practice" ? "Practice · " : ""}Prompt ${game.i + 1} of ${game.qs.length}`;
     $("promptText").textContent = q.prompt;
@@ -265,10 +386,17 @@
     $("answerInput").disabled = true;
     const q = game.qs[game.i];
     const pts = hit ? hit[1] : 0;
+    const pct = hit ? pctOf(q, hit) : null;
     const before = game.score;
     const prevLevel = levelFor(before);
     game.score += pts;
-    game.results.push({ prompt: q.prompt, answer: hit ? hit[0] : null, pts });
+    game.results.push({ q: q.prompt, a: hit ? hit[0] : null, p: pts, pct });
+    const rec = record();
+    if (rec) {
+      rec.score = game.score;
+      rec.open = false;
+      saveHistory();
+    }
 
     // Reveal card.
     show("revealScreen");
@@ -277,10 +405,11 @@
     $("revealHit").className = `reveal-hit${hit ? "" : " miss"}${pts >= WORLDIE ? " elite" : ""}`;
     $("revealWho").textContent = hit ? hit[0] : "Time's up";
     $("revealTier").textContent = hit ? TIERS[tierIndex(pts)].name : "No points";
+    $("revealPick").textContent = hit ? `Picked by ${approxPct(pct)} of players` : "";
     playMeter(pts, !hit);
     const sorted = [...q.answers].sort((a, b) => a[1] - b[1]);
     const others = sorted.filter((a) => a !== hit);
-    const li = (a) => `<li><span>${esc(a[0])}</span><b>${a[1]}</b></li>`;
+    const li = (a) => `<li><span>${esc(a[0])}</span><i>${fmtPct(pctOf(q, a))}</i><b>${a[1]}</b></li>`;
     $("commonList").innerHTML = others.slice(0, 3).map(li).join("");
     $("rareList").innerHTML = others.slice(-3).reverse().map(li).join("");
     const last = game.i === game.qs.length - 1;
@@ -348,18 +477,24 @@
   }
 
   function endGame() {
-    const summary = { score: game.score, results: game.results };
-    if (game.mode === "daily") store.set(SAVE_KEY, summary);
-    showResults(summary, game.mode);
+    const rec = record();
+    if (rec) {
+      rec.done = true;
+      saveHistory();
+      renderStreak();
+    }
+    showResults({ score: game.score, results: game.results }, game.mode);
   }
 
   function shareText(summary) {
     const lvl = LEVELS[levelFor(summary.score)];
+    const { current } = computeStats();
     return [
       `THE CLIMB #${gameNo} ⚽`,
       `${lvl.name} — ${summary.score} pts`,
-      summary.results.map((r) => emoji(r.pts)).join(""),
-    ].join("\n");
+      summary.results.map((r) => emoji(r.p)).join(""),
+      current > 1 ? `🔥 ${current}-day streak` : "",
+    ].filter(Boolean).join("\n");
   }
 
   function showResults(summary, mode) {
@@ -375,11 +510,16 @@
     fl.classList.toggle("top", lvl === LEVELS.length - 1);
     animateNumber($("finalScore"), 0, summary.score, 1000);
     $("breakdown").innerHTML = summary.results.map((r) => `
-      <li><span>${emoji(r.pts)}</span>
-        <span>${r.answer ? esc(r.answer) : "—"}<span class="q">${esc(r.prompt)}</span></span>
-        <span class="p${r.pts ? "" : " zero"}">${r.pts}</span></li>`).join("");
+      <li><span>${emoji(r.p)}</span>
+        <span>${r.a ? esc(r.a) : "—"}<span class="q">${r.pct != null ? `${approxPct(r.pct)} picked · ` : ""}${esc(r.q)}</span></span>
+        <span class="p${r.p ? "" : " zero"}">${r.p}</span></li>`).join("");
     $("shareBtn").hidden = mode === "practice";
     $("shareBtn").onclick = () => copy(shareText(summary));
+    const s = computeStats();
+    $("miniStats").innerHTML = s.games ? `
+      <div><b>${s.games}</b><span>Played</span></div>
+      <div><b>${s.current}</b><span>Streak</span></div>
+      <div><b>${s.average}</b><span>Average</span></div>` : "";
     startCountdown();
   }
 
@@ -418,11 +558,26 @@
 
   // ---------- boot ----------
 
+  // Earlier versions saved each finished day under its own key; fold those in.
+  function migrateOldSaves() {
+    for (let n = 1; n <= gameNo; n++) {
+      const old = store.get(`climb-game-${n}`);
+      if (!old || history.games[n]) continue;
+      history.games[n] = {
+        score: old.score, done: true, open: false,
+        results: old.results.map((r) => ({ q: r.prompt, a: r.answer, p: r.pts })),
+      };
+      try { localStorage.removeItem(`climb-game-${n}`); } catch { /* ignore */ }
+    }
+    saveHistory();
+  }
+
   function boot() {
     const bd = $("backdrop");
     bd.innerHTML = Scenes.build().join("");
     scenes = [...bd.querySelectorAll(".scene")];
     setScene(0);
+    migrateOldSaves();
 
     $("gameLabel").textContent = `Game #${gameNo}`;
     // Start-screen pyramid: narrowest at the top, lighting up from the bottom.
@@ -431,18 +586,33 @@
       return `<div class="pyr${top ? " top" : ""}" style="--w:${100 - i * 11}%;--d:${(i * 0.7).toFixed(1)}s">${top ? "🏆 " : ""}${l.name}<span>${l.min}+ pts</span></div>`;
     }).reverse().join("");
     renderLadder(0);
+    renderStreak();
 
     $("startBtn").onclick = () => newGame("daily");
     $("practiceBtn").onclick = () => newGame("practice");
     $("answerForm").addEventListener("submit", submit);
     $("nextBtn").onclick = next;
     $("helpBtn").onclick = () => $("helpDialog").showModal();
+    $("statsBtn").onclick = openStats;
+    $("streakChip").onclick = openStats;
+    $("resultsStatsBtn").onclick = openStats;
 
     window.addEventListener("resize", () => renderLadder(ladderScore));
 
-    const saved = store.get(SAVE_KEY);
-    if (saved) showResults(saved, "daily");
-    else show("startScreen");
+    // One daily game per day: finished → results; started → resume.
+    const rec = history.games[gameNo];
+    if (rec && rec.done) {
+      showResults({ score: rec.score, results: rec.results }, "daily");
+    } else {
+      show("startScreen");
+      if (rec) {
+        $("startBtn").textContent = `Continue game #${gameNo}`;
+        $("resumeNote").hidden = false;
+        $("resumeNote").textContent = rec.open
+          ? `You left in the middle of prompt ${rec.results.length + 1}, so that one counts as a miss. ${rec.results.length + 1} of 7 done.`
+          : `You've played ${rec.results.length} of 7 prompts. Pick up where you left off.`;
+      }
+    }
 
     // Handy for previewing the backdrops: add #level=0…4 to the URL.
     const m = location.hash.match(/level=(\d)/);
