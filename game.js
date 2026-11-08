@@ -198,9 +198,10 @@
     return ["🟨", "🟨", "🟩", "⭐", "🔥"][tierIndex(pts)];
   }
 
-  function animateNumber(el, from, to, ms = 700) {
+  function animateNumber(el, from, to, ms = 700, alive = () => true) {
     const t0 = performance.now();
     const step = (t) => {
+      if (!alive()) return;
       const k = Math.min(1, (t - t0) / ms);
       el.textContent = Math.round(from + (to - from) * (1 - Math.pow(1 - k, 3)));
       if (k < 1) requestAnimationFrame(step);
@@ -404,14 +405,15 @@
     $("revealPrompt").textContent = q.prompt;
     $("revealHit").className = `reveal-hit${hit ? "" : " miss"}${pts >= WORLDIE ? " elite" : ""}`;
     $("revealWho").textContent = hit ? hit[0] : "Time's up";
-    $("revealTier").textContent = hit ? TIERS[tierIndex(pts)].name : "No points";
+    $("revealTier").textContent = hit ? TIERS[tierIndex(pts)].name : "Into Row Z";
     $("revealPick").textContent = hit ? `Picked by ${approxPct(pct)} of players` : "";
     playMeter(pts, !hit);
     const sorted = [...q.answers].sort((a, b) => a[1] - b[1]);
-    const others = sorted.filter((a) => a !== hit);
-    const li = (a) => `<li><span>${esc(a[0])}</span><i>${fmtPct(pctOf(q, a))}</i><b>${a[1]}</b></li>`;
-    $("commonList").innerHTML = others.slice(0, 3).map(li).join("");
-    $("rareList").innerHTML = others.slice(-3).reverse().map(li).join("");
+    // Top 3 each way, including the player's own answer (marked "You").
+    // Short lists are split so no answer shows up in both.
+    const li = (a) => `<li${a === hit ? ' class="yours"' : ""}><span>${esc(a[0])}${a === hit ? "<em>You</em>" : ""}</span><i>${fmtPct(pctOf(q, a))}</i><b>${a[1]}</b></li>`;
+    $("commonList").innerHTML = sorted.slice(0, 3).map(li).join("");
+    $("rareList").innerHTML = sorted.slice(Math.max(3, sorted.length - 3)).reverse().map(li).join("");
     const last = game.i === game.qs.length - 1;
     $("nextBtn").textContent = last ? "See full time" : "Next prompt";
     $("nextBtn").focus();
@@ -433,10 +435,13 @@
 
   // The ball rolls along the rarity meter to where this answer sits, then
   // the tier name stamps in. Worldies get a burst of gold sparks.
-  let landTimer;
+  let landTimer, meterRun = 0;
   function playMeter(pts, missed) {
     const meter = $("meter"), box = $("revealHit");
     clearTimeout(landTimer);
+    // Anything still animating from the previous reveal stops here.
+    const run = ++meterRun;
+    const alive = () => run === meterRun;
     const idx = missed ? -1 : tierIndex(pts);
     meter.className = `meter${missed ? " miss" : ""}`;
     meter.style.setProperty("--p", 0);
@@ -444,10 +449,10 @@
       <div class="meter-scale">${TIERS.map((t) => `<span style="left:${t.at}%">${t.name}</span>`).join("")}</div>`;
     $("revealPts").textContent = "0";
     requestAnimationFrame(() => requestAnimationFrame(() => {
-      if (missed) return;
+      if (missed || !alive()) return;
       meter.style.setProperty("--p", pts / 100);
       meter.classList.add("go");
-      animateNumber($("revealPts"), 0, pts, 1200);
+      animateNumber($("revealPts"), 0, pts, 1200, alive);
     }));
     landTimer = setTimeout(() => {
       box.classList.add("landed");
