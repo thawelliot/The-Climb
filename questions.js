@@ -5,6 +5,12 @@
 // Prompts say exactly what counts: the time range, whether "ever" or
 // "current", and whether loans count. Ranges stop where the facts are
 // confirmed; extend them (and the answers) as new seasons finish.
+//
+// Each prompt is used in one daily game only, then lives on in practice.
+// Never reorder or remove prompts in this file or any batch file: the daily
+// schedule depends on their positions. New prompts go in a new batch file
+// (questions-3.js and so on, loaded after the others in index.html), which
+// is scheduled after everything before it, 7 per day.
 
 const QUESTIONS = [
   // ---------- International ----------
