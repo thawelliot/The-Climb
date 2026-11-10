@@ -142,6 +142,12 @@ body {
 @keyframes rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
 
 .eyebrow { margin: 0 0 10px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 2px; color: var(--accent); }
+.eyebrow-row { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.player-count { font-size: 12px; font-weight: 700; color: var(--muted); white-space: nowrap; }
+.player-count::before {
+  content: ""; display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%;
+  background: var(--accent); box-shadow: 0 0 8px var(--accent);
+}
 .title { margin: 0 0 12px; font-family: var(--display); font-weight: 400; font-size: clamp(44px, 9vw, 64px); line-height: .95; letter-spacing: 1px; }
 .lede { margin: 0 0 22px; color: var(--muted); font-size: 15px; }
 .lede strong { color: var(--ink); }
@@ -195,6 +201,8 @@ body {
 .btn.ghost { background: rgba(255, 255, 255, .08); color: var(--ink); border: 1px solid var(--line); }
 .btn.ghost:hover { background: rgba(255, 255, 255, .14); }
 #startBtn { width: 100%; font-size: 17px; padding: 16px; }
+#startBtn:disabled { background: rgba(255, 255, 255, .1); color: var(--muted); cursor: default; }
+#startPracticeBtn { width: 100%; margin-top: 10px; }
 
 /* ---------- Play ---------- */
 

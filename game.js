@@ -43,23 +43,34 @@
     };
   }
 
-  // One fixed shuffle of the bank; each day takes the next 7.
+  // The daily schedule. Each prompt is used in exactly one daily game, ever.
+  // The first 105 prompts keep the fixed shuffle they launched with, so games
+  // already played never change; prompts added later to the END of
+  // questions.js are scheduled after them, in file order.
+  const LAUNCH_BANK = 105;
   const ORDER = (() => {
-    const idx = QUESTIONS.map((_, i) => i);
+    const idx = Array.from({ length: Math.min(LAUNCH_BANK, QUESTIONS.length) }, (_, i) => i);
     const rand = seeded(2026);
     for (let i = idx.length - 1; i > 0; i--) {
       const j = Math.floor(rand() * (i + 1));
       [idx[i], idx[j]] = [idx[j], idx[i]];
     }
+    for (let i = LAUNCH_BANK; i < QUESTIONS.length; i++) idx.push(i);
     return idx;
   })();
 
+  // Daily games that have a full set of fresh prompts (game numbers 1…N).
+  const DAILY_GAMES = Math.floor(ORDER.length / PROMPTS_PER_GAME);
+
+  // null once the bank has run out of fresh prompts.
   function dailyQuestions(day) {
-    const n = QUESTIONS.length;
-    const start = (((day * PROMPTS_PER_GAME) % n) + n) % n;
-    return Array.from({ length: PROMPTS_PER_GAME }, (_, k) => QUESTIONS[ORDER[(start + k) % n]]);
+    if (day < 0 || day >= DAILY_GAMES) return null;
+    const start = day * PROMPTS_PER_GAME;
+    return ORDER.slice(start, start + PROMPTS_PER_GAME).map((i) => QUESTIONS[i]);
   }
 
+  // Practice draws from the whole bank, including prompts already used in
+  // past daily games (the only place those can appear again).
   function practiceQuestions() {
     const idx = QUESTIONS.map((_, i) => i).sort(() => Math.random() - 0.5);
     return idx.slice(0, PROMPTS_PER_GAME).map((i) => QUESTIONS[i]);
@@ -224,8 +235,10 @@
 
     // Current streak counts back from today, or from yesterday if today
     // hasn't been played yet (so the streak isn't "lost" until midnight).
+    // Days with no daily game (the bank ran out) don't break it.
     let current = 0;
-    for (let n = played.has(gameNo) ? gameNo : gameNo - 1; played.has(n); n--) current++;
+    const lastGame = Math.min(gameNo, DAILY_GAMES);
+    for (let n = played.has(lastGame) ? lastGame : lastGame - 1; played.has(n); n--) current++;
     let best = 0, run = 0;
     [...played].sort((a, b) => a - b).forEach((n, i, arr) => {
       run = i && n === arr[i - 1] + 1 ? run + 1 : 1;
@@ -305,6 +318,46 @@
   let game = null;
   let timerRaf = 0;
 
+  // ---------- player count ----------
+
+  // An anonymous tally of devices that have started each daily game, kept by
+  // a free counter service (Abacus). Nothing about the player is sent. If
+  // the service can't be reached, the count just doesn't show.
+  const LIVE = location.protocol !== "file:" && !/^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
+  const COUNT_URL = "https://abacus.jasoncameron.dev";
+  const COUNT_SPACE = LIVE ? "theclimbfootball" : "theclimbfootball-dev"; // local testing never touches the live tally
+  const MIN_PLAYERS_SHOWN = LIVE ? 25 : 1; // small numbers stay hidden on the live site
+
+  async function playerCount(action) {
+    try {
+      const res = await fetch(`${COUNT_URL}/${action}/${COUNT_SPACE}/game-${gameNo}`);
+      return res.ok ? (await res.json()).value : null;
+    } catch {
+      return null;
+    }
+  }
+
+  // Counts this device once for today's game (when it starts it), then
+  // shows the total. A failed count is retried the next time the page loads.
+  let countBusy = false;
+  async function refreshPlayerCount() {
+    if (countBusy) return;
+    countBusy = true;
+    const rec = history.games[gameNo];
+    const first = rec && !rec.counted;
+    const n = await playerCount(first ? "hit" : "get");
+    if (first && n != null) {
+      rec.counted = true;
+      saveHistory();
+    }
+    countBusy = false;
+    const show = typeof n === "number" && n >= MIN_PLAYERS_SHOWN;
+    document.querySelectorAll(".player-count").forEach((el) => {
+      el.hidden = !show;
+      if (show) el.textContent = `${n.toLocaleString("en-GB")} played today`;
+    });
+  }
+
   // Daily games write every step to history; practice rounds don't.
   function record() { return game.mode === "daily" ? history.games[gameNo] : null; }
 
@@ -323,7 +376,10 @@
       rec.open = false;
       toast(`Prompt ${rec.results.length} counted as a miss — you left mid-prompt`);
     }
-    if (rec) saveHistory();
+    if (rec) {
+      saveHistory();
+      refreshPlayerCount();
+    }
     game.i = game.results.length;
     $("scorePill").hidden = false;
     $("scoreNum").textContent = game.score;
@@ -652,6 +708,7 @@
 
     $("startBtn").onclick = () => newGame("daily");
     $("practiceBtn").onclick = () => newGame("practice");
+    $("startPracticeBtn").onclick = () => newGame("practice");
     $("answerForm").addEventListener("submit", submit);
     $("dymYes").onclick = () => confirmGuess(true);
     $("dymNo").onclick = () => confirmGuess(false);
@@ -674,6 +731,14 @@
     const rec = history.games[gameNo];
     if (rec && rec.done) {
       showResults({ score: rec.score, results: rec.results }, "daily");
+    } else if (!dailyQuestions(today)) {
+      // Every prompt has had its daily outing: nothing fresh to play.
+      show("startScreen");
+      $("startBtn").textContent = "No new daily game today";
+      $("startBtn").disabled = true;
+      $("resumeNote").hidden = false;
+      $("resumeNote").textContent = "We've used every fresh prompt for now. New ones are on the way, and your streak is safe until they arrive. Fancy a practice round in the meantime?";
+      $("startPracticeBtn").hidden = false;
     } else {
       show("startScreen");
       if (rec) {
@@ -684,6 +749,8 @@
           : `You've played ${rec.results.length} of 7 prompts. Pick up where you left off.`;
       }
     }
+
+    if (dailyQuestions(today)) refreshPlayerCount();
 
     // Handy for previewing the backdrops: add #level=0…4 to the URL.
     const m = location.hash.match(/level=(\d)/);
