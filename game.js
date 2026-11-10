@@ -326,7 +326,7 @@
   const LIVE = location.protocol !== "file:" && !/^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
   const COUNT_URL = "https://abacus.jasoncameron.dev";
   const COUNT_SPACE = LIVE ? "theclimbfootball" : "theclimbfootball-dev"; // local testing never touches the live tally
-  const MIN_PLAYERS_SHOWN = LIVE ? 25 : 1; // small numbers stay hidden on the live site
+  const MIN_PLAYERS_SHOWN = 1; // raise this to hide small numbers
 
   async function playerCount(action) {
     try {
